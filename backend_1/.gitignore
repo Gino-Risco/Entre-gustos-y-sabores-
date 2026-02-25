@@ -8,3 +8,4 @@ yarn-error.log*
 
 # Environment variables
 .env
+.DS_Store
