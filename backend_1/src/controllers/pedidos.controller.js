@@ -19,7 +19,7 @@ const pedidosController = {
         detalles
       });
 
-      res.status(201).json({ success: true, data: pedido });
+      res.status(201).json({ success: true,  pedido });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -28,7 +28,7 @@ const pedidosController = {
   obtenerPorId: async (req, res) => {
     try {
       const pedido = await pedidosService.obtenerPorId(req.params.id);
-      res.json({ success: true, data: pedido });
+      res.json({ success: true,  pedido });
     } catch (error) {
       res.status(404).json({ success: false, message: error.message });
     }
@@ -37,7 +37,7 @@ const pedidosController = {
   obtenerPorMesa: async (req, res) => {
     try {
       const pedidos = await pedidosService.obtenerPorMesa(req.params.mesa_id);
-      res.json({ success: true, data: pedidos });
+      res.json({ success: true,  pedidos });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -55,7 +55,7 @@ const pedidosController = {
         req.usuario.id
       );
 
-      res.json({ success: true, data: detalle });
+      res.json({ success: true,  detalle });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -64,7 +64,17 @@ const pedidosController = {
   cerrarPedido: async (req, res) => {
     try {
       const pedido = await pedidosService.cerrarPedido(req.params.id, req.usuario.id);
-      res.json({ success: true, data: pedido });
+      res.json({ success: true,  pedido });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  cancelarPedido: async (req, res) => {
+    try {
+      const { motivo } = req.body;
+      const pedido = await pedidosService.cancelarPedido(req.params.id, motivo, req.usuario.id);
+      res.json({ success: true,  pedido });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -88,7 +98,17 @@ const pedidosController = {
         usuario_id: req.usuario.id
       });
 
-      res.status(201).json({ success: true, data: pago });
+      res.status(201).json({ success: true,  pago });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  anularPago: async (req, res) => {
+    try {
+      const { pago_id } = req.params;
+      await pedidosService.anularPago(pago_id, req.usuario.id);
+      res.json({ success: true, message: 'Pago anulado correctamente' });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -97,7 +117,7 @@ const pedidosController = {
   obtenerPedidosCocina: async (req, res) => {
     try {
       const pedidos = await pedidosService.obtenerPedidosCocina();
-      res.json({ success: true, data: pedidos });
+      res.json({ success: true,  pedidos });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

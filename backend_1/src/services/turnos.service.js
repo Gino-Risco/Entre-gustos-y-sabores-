@@ -53,25 +53,23 @@ class TurnosService {
         `SELECT COALESCE(SUM(pa.monto), 0) as total_efectivo
          FROM pagos pa
          JOIN pedidos p ON pa.pedido_id = p.id
-         WHERE p.turno_id = $1 AND p.estado = 'cerrado' AND pa.metodo_pago = 'efectivo'`,
+         WHERE p.turno_id = $1 AND p.estado = 'cerrado' AND pa.metodo_pago = 'efectivo' AND pa.anulado = false`,
         [turno_id]
       );
 
       const totalEfectivo = parseFloat(efectivoResult.rows[0].total_efectivo);
       const montoEsperado = parseFloat(turno.monto_inicial) + totalEfectivo;
-      const diferencia = monto_real - montoEsperado;
 
-      // Actualizar turno
+      // Actualizar turno (diferencia_caja se calcula automáticamente por ser GENERATED)
       const result = await client.query(
         `UPDATE turnos_caja 
          SET fecha_cierre = CURRENT_TIMESTAMP,
              monto_final_esperado = $1,
              monto_final_real = $2,
-             diferencia_caja = $3,
-             observaciones_cierre = $4,
+             observaciones_cierre = $3,
              estado = 'cerrado'
-         WHERE id = $5 RETURNING *`,
-        [montoEsperado, monto_real, diferencia, observaciones, turno_id]
+         WHERE id = $4 RETURNING *`,
+        [montoEsperado, monto_real, observaciones, turno_id]
       );
 
       await client.query('COMMIT');
@@ -83,7 +81,7 @@ class TurnosService {
           total_efectivo: totalEfectivo,
           monto_esperado: montoEsperado,
           monto_real: monto_real,
-          diferencia: diferencia
+          diferencia: monto_real - montoEsperado // Para mostrar en respuesta
         }
       };
     } catch (error) {

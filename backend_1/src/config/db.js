@@ -14,11 +14,11 @@ const pool = new Pool({
 
 // Verificar conexión al iniciar
 pool.on('connect', () => {
-  console.log('✅ Nueva conexión a PostgreSQL establecida');
+  console.log(' Nueva conexión a PostgreSQL establecida');
 });
 
 pool.on('error', (err) => {
-  console.error('❌ Error inesperado en el pool de PostgreSQL:', err);
+  console.error(' Error inesperado en el pool de PostgreSQL:', err);
 });
 
 // Función para testear conexión
@@ -27,10 +27,10 @@ async function testConnection() {
     const client = await pool.connect();
     await client.query('SELECT NOW()');
     client.release();
-    console.log('✅ Conexión a PostgreSQL verificada correctamente');
+    console.log(' Conexión a PostgreSQL verificada correctamente');
     return true;
   } catch (error) {
-    console.error('❌ Error conectando a PostgreSQL:', error.message);
+    console.error(' Error conectando a PostgreSQL:', error.message);
     return false;
   }
 }

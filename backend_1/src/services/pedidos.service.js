@@ -7,7 +7,6 @@ class PedidosService {
     try {
       await client.query('BEGIN');
 
-      // Verificar que la mesa exista y esté disponible
       const mesaResult = await client.query(
         'SELECT estado FROM mesas WHERE id = $1 AND activo = true',
         [mesa_id]
@@ -17,7 +16,6 @@ class PedidosService {
         throw new Error('Mesa no encontrada');
       }
 
-      // Verificar que exista un turno abierto
       const turnoResult = await client.query(
         "SELECT id FROM turnos_caja WHERE id = $1 AND estado = 'abierto'",
         [turno_id]
@@ -27,7 +25,6 @@ class PedidosService {
         throw new Error('No hay un turno de caja abierto');
       }
 
-      // Crear pedido
       const pedidoResult = await client.query(
         `INSERT INTO pedidos (mesa_id, mesero_id, turno_id, estado, descuento_global) 
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
@@ -36,9 +33,7 @@ class PedidosService {
 
       const pedido = pedidoResult.rows[0];
 
-      // Insertar detalles del pedido
       for (const detalle of detalles) {
-        // Verificar producto
         const productoResult = await client.query(
           'SELECT precio_venta, activo FROM productos WHERE id = $1',
           [detalle.producto_id]
@@ -62,7 +57,6 @@ class PedidosService {
         );
       }
 
-      // Actualizar estado de la mesa a 'ocupada'
       await client.query(
         "UPDATE mesas SET estado = 'ocupada' WHERE id = $1",
         [mesa_id]
@@ -70,7 +64,6 @@ class PedidosService {
 
       await client.query('COMMIT');
 
-      // Obtener pedido completo con detalles
       return await this.obtenerPorId(pedido.id);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -82,20 +75,7 @@ class PedidosService {
 
   async obtenerPorId(id) {
     const result = await pool.query(
-      `SELECT 
-        p.*,
-        m.nombre as mesa_nombre,
-        u.nombre_completo as mesero_nombre,
-        (SELECT COALESCE(SUM(pd.subtotal - pd.descuento_item), 0) 
-         FROM pedido_detalles pd 
-         WHERE pd.pedido_id = p.id AND pd.estado_cocina != 'cancelado') as subtotal_calculado,
-        (SELECT COALESCE(SUM(pd.subtotal - pd.descuento_item), 0) - p.descuento_global 
-         FROM pedido_detalles pd 
-         WHERE pd.pedido_id = p.id AND pd.estado_cocina != 'cancelado') as total_calculado
-       FROM pedidos p
-       JOIN mesas m ON p.mesa_id = m.id
-       JOIN usuarios u ON p.mesero_id = u.id
-       WHERE p.id = $1`,
+      `SELECT * FROM vista_total_pedidos WHERE pedido_id = $1`,
       [id]
     );
 
@@ -105,7 +85,6 @@ class PedidosService {
 
     const pedido = result.rows[0];
 
-    // Obtener detalles
     const detallesResult = await pool.query(
       `SELECT 
         pd.*,
@@ -170,7 +149,6 @@ class PedidosService {
     try {
       await client.query('BEGIN');
 
-      // Verificar que todos los detalles estén servidos o cancelados
       const pendientesResult = await client.query(
         `SELECT COUNT(*) as count FROM pedido_detalles 
          WHERE pedido_id = $1 AND estado_cocina IN ('pendiente', 'cocinando', 'listo')`,
@@ -181,7 +159,6 @@ class PedidosService {
         throw new Error('Hay platos pendientes de servir. No se puede cerrar el pedido.');
       }
 
-      // Actualizar pedido a cerrado
       const result = await client.query(
         `UPDATE pedidos 
          SET estado = 'cerrado', fecha_cierre = CURRENT_TIMESTAMP 
@@ -193,11 +170,63 @@ class PedidosService {
         throw new Error('Pedido no encontrado');
       }
 
-      // Liberar mesa
       const pedido = result.rows[0];
       await client.query(
         "UPDATE mesas SET estado = 'sucia' WHERE id = $1",
         [pedido.mesa_id]
+      );
+
+      await client.query('COMMIT');
+
+      return await this.obtenerPorId(pedido_id);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async cancelarPedido(pedido_id, motivo, usuario_id) {
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const pagosResult = await client.query(
+        'SELECT COUNT(*) as count FROM pagos WHERE pedido_id = $1',
+        [pedido_id]
+      );
+
+      if (parseInt(pagosResult.rows[0].count) > 0) {
+        throw new Error('No se puede cancelar un pedido con pagos registrados. Procese la devolución primero.');
+      }
+
+      const result = await client.query(
+        `UPDATE pedidos 
+         SET estado = 'cancelado', 
+             fecha_cierre = CURRENT_TIMESTAMP,
+             motivo_cancelacion = $1,
+             usuario_cancelacion_id = $2,
+             fecha_cancelacion = CURRENT_TIMESTAMP
+         WHERE id = $3 RETURNING *`,
+        [motivo, usuario_id, pedido_id]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error('Pedido no encontrado');
+      }
+
+      await client.query(
+        `UPDATE pedido_detalles 
+         SET estado_cocina = 'cancelado' 
+         WHERE pedido_id = $1 AND estado_cocina NOT IN ('servido', 'cancelado')`,
+        [pedido_id]
+      );
+
+      await client.query(
+        "UPDATE mesas SET estado = 'libre' WHERE id = (SELECT mesa_id FROM pedidos WHERE id = $1)",
+        [pedido_id]
       );
 
       await client.query('COMMIT');
@@ -218,21 +247,13 @@ class PedidosService {
       throw new Error(`Método de pago inválido. Debe ser uno de: ${metodosValidos.join(', ')}`);
     }
 
-    // Obtener total del pedido
     const pedido = await this.obtenerPorId(pedido_id);
     
-    if (pedido.estado !== 'cerrado') {
+    if (pedido.estado_pedido !== 'cerrado' && pedido.estado !== 'cerrado') {
       throw new Error('El pedido debe estar cerrado antes de registrar pagos');
     }
 
-    // Verificar que no se pague más del total
-    const pagadosResult = await pool.query(
-      'SELECT COALESCE(SUM(monto), 0) as total_pagado FROM pagos WHERE pedido_id = $1',
-      [pedido_id]
-    );
-
-    const totalPagado = parseFloat(pagadosResult.rows[0].total_pagado);
-    const totalPendiente = parseFloat(pedido.total_calculado) - totalPagado;
+    const totalPendiente = parseFloat(pedido.saldo_pendiente || pedido.total_calculado);
 
     if (monto > totalPendiente) {
       throw new Error(`El monto excede el saldo pendiente. Pendiente: ${totalPendiente}`);
@@ -245,6 +266,45 @@ class PedidosService {
     );
 
     return result.rows[0];
+  }
+
+  async anularPago(pago_id, usuario_id) {
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const pagoResult = await client.query(
+        'SELECT * FROM pagos WHERE id = $1',
+        [pago_id]
+      );
+
+      if (pagoResult.rows.length === 0) {
+        throw new Error('Pago no encontrado');
+      }
+
+      await client.query(
+        `UPDATE pagos 
+         SET anulado = true 
+         WHERE id = $1`,
+        [pago_id]
+      );
+
+      await client.query(
+        `INSERT INTO auditoria (usuario_id, accion, tabla_afectada, registro_id, detalles)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [usuario_id, 'Anular pago', 'pagos', pago_id, JSON.stringify({ motivo: 'Devolución' })]
+      );
+
+      await client.query('COMMIT');
+
+      return { message: 'Pago anulado correctamente' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async obtenerPedidosCocina() {

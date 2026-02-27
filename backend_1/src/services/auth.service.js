@@ -4,9 +4,20 @@ const jwt = require('jsonwebtoken');
 
 class AuthService {
   async login(usuario, password) {
-    // Buscar usuario
+    // Buscar usuario con JOIN a roles
     const result = await pool.query(
-      'SELECT id, nombre_completo, usuario, password_hash, rol, activo, password_hash_algorithm FROM usuarios WHERE usuario = $1',
+      `SELECT 
+        u.id, 
+        u.nombre_completo, 
+        u.usuario, 
+        u.password_hash, 
+        u.activo, 
+        u.password_hash_algorithm,
+        r.id as rol_id,
+        r.nombre as rol_nombre
+       FROM usuarios u
+       JOIN roles r ON u.rol_id = r.id
+       WHERE u.usuario = $1 AND u.activo = true`,
       [usuario]
     );
 
@@ -15,11 +26,6 @@ class AuthService {
     }
 
     const user = result.rows[0];
-
-    // Verificar si está activo
-    if (!user.activo) {
-      throw new Error('Usuario desactivado. Contacte al administrador.');
-    }
 
     // Verificar contraseña
     const passwordValido = await bcrypt.compare(password, user.password_hash);
@@ -34,9 +40,9 @@ class AuthService {
       [user.id]
     );
 
-    // Generar token JWT
+    // Generar token JWT (incluir rol_nombre)
     const token = jwt.sign(
-      { id: user.id, usuario: user.usuario, rol: user.rol },
+      { id: user.id, usuario: user.usuario, rol: user.rol_nombre, rol_id: user.rol_id },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE }
     );
@@ -47,7 +53,8 @@ class AuthService {
         id: user.id,
         nombre_completo: user.nombre_completo,
         usuario: user.usuario,
-        rol: user.rol
+        rol: user.rol_nombre,
+        rol_id: user.rol_id
       }
     };
   }
