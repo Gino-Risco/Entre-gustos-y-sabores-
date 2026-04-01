@@ -17,9 +17,9 @@ export const CompraCrear = () => {
     const [serieComprobante, setSerieComprobante] = useState('');
     const [numeroComprobante, setNumeroComprobante] = useState('');
     const [aplicarIgv, setAplicarIgv] = useState(false);
-
+    
     // 👇 1. NUEVO ESTADO PARA EL MÉTODO DE PAGO 👇
-    const [metodoPago, setMetodoPago] = useState('efectivo');
+    const [metodoPago, setMetodoPago] = useState('efectivo'); 
 
     const [observaciones, setObservaciones] = useState('');
     const [productos, setProductos] = useState([{ producto_id: '', cantidad: '', costo_unitario: '' }]);
@@ -44,9 +44,7 @@ export const CompraCrear = () => {
             const provData = await comprasService.getAllProveedores();
             setProveedores(provData);
 
-            // AQUÍ ESTÁ EL CAMBIO: Le agregamos la ruta de tu backend
-            const API_URL = import.meta.env.VITE_API_URL;
-            const response = await fetch(`${API_URL}/api/productos`);
+            const response = await fetch('/api/productos');
             const data = await response.json();
             // Ahora aceptamos insumos y empacados
             const insumos = data.data.productos.filter(p =>
@@ -112,10 +110,10 @@ export const CompraCrear = () => {
                 tipo_comprobante: tipoComprobante,
                 serie_comprobante: serieComprobante || null,
                 numero_comprobante: numeroComprobante || null,
-                igv: igvCalculado,
+                igv: igvCalculado, 
                 observaciones,
                 // 👇 2. ENVIAMOS EL MÉTODO DE PAGO AL BACKEND 👇
-                metodo_pago: metodoPago,
+                metodo_pago: metodoPago, 
                 detalles: detalles.map(d => ({
                     producto_id: parseInt(d.producto_id),
                     cantidad: parseFloat(d.cantidad),
