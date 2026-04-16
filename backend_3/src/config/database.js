@@ -1,13 +1,20 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Pool de conexiones
+// Esta es la clave: detectamos si estamos en Railway o en tu PC
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Si hay una DATABASE_URL (Railway), la usa. 
+// Si no existe (tu PC), usa las variables sueltas de siempre.
+const connectionString = process.env.DATABASE_URL || 
+  `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
+
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  connectionString: connectionString,
+  // Aquí está el truco para el funcionamiento local:
+  // Si es producción, activa SSL (obligatorio para Supabase en la nube).
+  // Si es local, lo desactiva para que no te dé errores en tu PC.
+  ssl: isProduction ? { rejectUnauthorized: false } : false,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
