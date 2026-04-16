@@ -13,6 +13,10 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
+pool.on('connect', (client) => {
+  client.query("SET timezone = 'America/Lima'");
+});
+
 // Manejo de errores del pool
 pool.on('error', (err) => {
   console.error('Error en pool de PostgreSQL:', err);
@@ -38,6 +42,7 @@ const TABLE = {
   CAJA_MOVIMIENTOS: `${SCHEMA.POS}.caja_movimientos`,
   CAJA_CIERRES: `${SCHEMA.POS}.caja_cierres`,
   TICKETS_COCINA: `${SCHEMA.POS}.tickets_cocina`,
+  CAJA_ARQUEOS: `${SCHEMA.POS}.caja_arqueos`,
   
   // Schema INVENTARIO
   PRODUCTOS: `${SCHEMA.INVENTARIO}.productos`,

@@ -31,14 +31,14 @@ async function getOrdenesPorCobrar(filtros = {}) {
 
     const result = await query(
         `SELECT o.*,
-            m.numero AS mesa_numero,
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero,
             u.nombre AS mesero_nombre,
             (SELECT COUNT(*) FROM ${TABLE.ORDEN_DETALLES} od 
              WHERE od.orden_id = o.id AND od.activo = TRUE) AS total_items,
             COALESCE((SELECT SUM(od.subtotal) FROM ${TABLE.ORDEN_DETALLES} od 
              WHERE od.orden_id = o.id AND od.activo = TRUE AND od.es_incluido_menu = FALSE), 0) AS subtotal
      FROM ${TABLE.ORDENES} o
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
      JOIN ${TABLE.USUARIOS} u ON u.id = o.mesero_id
      WHERE ${whereClause}
      ORDER BY o.created_at DESC`,
@@ -51,9 +51,19 @@ async function getOrdenesPorCobrar(filtros = {}) {
 async function getAllVentas(filtros = {}) {
     const { fecha_desde, fecha_hasta, cajero_id, metodo_pago, activo } = filtros;
 
-    const conditions = ['v.activo = TRUE'];
+    // Eliminamos la restricción estricta de TRUE para poder ver las anuladas en rojo
+    const conditions = [];
     const params = [];
     let paramIndex = 1;
+
+    // Solo filtramos por activo si el frontend lo pide explícitamente
+    if (activo !== undefined) {
+        conditions.push(`v.activo = $${paramIndex}`);
+        params.push(activo);
+        paramIndex++;
+    } else {
+        conditions.push('1=1'); // Truco SQL de seguridad para el JOIN
+    }
 
     if (fecha_desde) {
         conditions.push(`v.created_at >= $${paramIndex}`);
@@ -84,11 +94,11 @@ async function getAllVentas(filtros = {}) {
     const result = await query(
         `SELECT v.*,
             o.numero_comanda,
-            m.numero AS mesa_numero,
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero,
             u.nombre AS cajero_nombre
      FROM ${TABLE.VENTAS} v
      JOIN ${TABLE.ORDENES} o ON o.id = v.orden_id
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
      JOIN ${TABLE.USUARIOS} u ON u.id = v.cajero_id
      WHERE ${whereClause}
      ORDER BY v.created_at DESC`,
@@ -102,11 +112,11 @@ async function getVentaById(id) {
     const result = await query(
         `SELECT v.*,
             o.numero_comanda,
-            m.numero AS mesa_numero,
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero,
             u.nombre AS cajero_nombre
      FROM ${TABLE.VENTAS} v
      JOIN ${TABLE.ORDENES} o ON o.id = v.orden_id
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
      JOIN ${TABLE.USUARIOS} u ON u.id = v.cajero_id
      WHERE v.id = $1 AND v.activo = TRUE`,
         [id]
@@ -129,7 +139,6 @@ async function getVentaById(id) {
     const venta = result.rows[0];
     return {
         ...venta,
-        // Calcular vuelto: monto_pagado - total
         vuelto: parseFloat((venta.monto_pagado - venta.total).toFixed(2)),
         detalles: detalles.rows,
     };
@@ -154,12 +163,14 @@ async function crearVenta(data, usuario_id) {
         throw AppError.forbidden('Solo cajeros pueden crear ventas');
     }
 
-    // Validar que la orden existe y está en estado válido para cobrar
-    // ✅ CORRECCIÓN: Se permiten más estados ('abierta', 'preparando', 'lista', 'enviada_cocina')
+    // ✅ CORRECCIÓN: LEFT JOIN para incluir órdenes Para Llevar (mesa_id = null)
     const orden = await query(
-        `SELECT o.*, m.id AS mesa_id, m.numero AS mesa_numero
+        `SELECT o.*,
+            o.mesa_id,
+            o.descuento_total,
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero
      FROM ${TABLE.ORDENES} o
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
      WHERE o.id = $1 AND o.activo = TRUE`,
         [orden_id]
     );
@@ -168,7 +179,7 @@ async function crearVenta(data, usuario_id) {
         throw AppError.notFound('Orden no encontrada');
     }
 
-    // ✅ CORRECCIÓN: Validar estados permitidos para cobrar
+    // Validar estados permitidos para cobrar
     if (!['abierta', 'enviada_cocina', 'preparando', 'lista'].includes(orden.rows[0].estado)) {
         throw AppError.conflict(
             `No se puede cobrar: orden en estado ${orden.rows[0].estado}. Debe estar en estado válido para cobro.`
@@ -186,7 +197,6 @@ async function crearVenta(data, usuario_id) {
     }
 
     // Obtener detalles de la orden
-    // ✅ CORRECCIÓN: Cambiar 'es_menu' por 'es_incluido_menu' (nombre correcto en BD)
     const detallesOrden = await query(
         `SELECT od.*, p.nombre AS producto_nombre, p.control_stock, od.es_incluido_menu
      FROM ${TABLE.ORDEN_DETALLES} od
@@ -205,12 +215,11 @@ async function crearVenta(data, usuario_id) {
         subtotal += (parseFloat(detalle.precio) * parseInt(detalle.cantidad));
     });
 
-    // Calcular IGV (18%)
-    const totalConDescuento = subtotal - descuento;
-
+    // ✅ CAMBIO: Usar descuento_total de la orden si no se paso explícitamente
+    const descuentoFinal = descuento > 0 ? descuento : parseFloat(orden.rows[0].descuento_total || 0);
+    const totalConDescuento = subtotal - descuentoFinal;
     const subtotal_base = totalConDescuento / 1.18;
     const igv = totalConDescuento - subtotal_base;
-
     const total = totalConDescuento;
 
     // Validar monto pagado
@@ -234,26 +243,22 @@ async function crearVenta(data, usuario_id) {
        (orden_id, cajero_id, subtotal, igv, descuento, total, metodo_pago, monto_pagado, activo)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
        RETURNING *`,
-            [orden_id, usuario_id, subtotal, igv, descuento, total, metodo_pago, monto_pagado]
+            [orden_id, usuario_id, subtotal, igv, descuentoFinal, total, metodo_pago, monto_pagado]
         );
 
         const venta = ventaResult.rows[0];
 
         // 2. Crear detalles de venta
-        // ✅ CORRECCIÓN: Cambiar columna 'es_menu' por 'es_incluido_menu'
         for (const detalle of detallesOrden.rows) {
             await client.query(
                 `INSERT INTO ${TABLE.VENTAS_DETALLE} 
          (venta_id, producto_id, cantidad, precio, es_incluido_menu, activo)
          VALUES ($1, $2, $3, $4, $5, TRUE)`,
-                // ✅ CORRECCIÓN: Usar el valor real de es_incluido_menu del detalle
                 [venta.id, detalle.producto_id, detalle.cantidad, detalle.precio, detalle.es_incluido_menu]
             );
-            // Trigger automático: trg_venta_detalle_kardex descuenta stock si control_stock = TRUE
         }
 
-        // 3. Registrar movimiento en caja (tipo 'venta')
-        // 3. Registrar movimiento en caja (tipo 'venta')
+        // 3. Registrar movimiento en caja
         const descripcionMovimiento = `Venta #${venta.id}`;
 
         await client.query(
@@ -279,13 +284,15 @@ async function crearVenta(data, usuario_id) {
             [orden_id]
         );
 
-        // 5. Liberar mesa (cambiar estado a 'libre')
-        await client.query(
-            `UPDATE ${TABLE.MESAS} 
-       SET estado = 'libre', updated_at = NOW()
-       WHERE id = $1`,
-            [orden.rows[0].mesa_id]
-        );
+        // 5. ✅ CORRECCIÓN: Liberar mesa SOLO si la orden tiene mesa asignada
+        if (orden.rows[0].mesa_id) {
+            await client.query(
+                `UPDATE ${TABLE.MESAS} 
+         SET estado = 'libre', updated_at = NOW()
+         WHERE id = $1`,
+                [orden.rows[0].mesa_id]
+            );
+        }
 
         // 6. Registrar ticket de venta
         await client.query(
@@ -296,7 +303,6 @@ async function crearVenta(data, usuario_id) {
 
         await client.query('COMMIT');
 
-        // Retornar venta completa con detalles
         return await getVentaById(venta.id);
     } catch (error) {
         await client.query('ROLLBACK');
@@ -349,7 +355,7 @@ async function anularVenta(id, usuario_id, motivo) {
             [id]
         );
 
-        // 4. Registrar movimiento contrario en caja (tipo 'gasto' o 'retiro')
+        // 4. Registrar movimiento contrario en caja
         const venta = await query(
             `SELECT total, cajero_id FROM ${TABLE.VENTAS} WHERE id = $1`,
             [id]
@@ -400,7 +406,7 @@ async function getTicketData(id) {
 }
 
 module.exports = {
-    getOrdenesPorCobrar,  // ← NUEVA FUNCIÓN
+    getOrdenesPorCobrar,
     getAllVentas,
     getVentaById,
     crearVenta,

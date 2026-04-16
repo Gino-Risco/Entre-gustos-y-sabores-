@@ -43,38 +43,36 @@ async function getAllOrdenes(filtros = {}) {
 
   const whereClause = conditions.join(' AND ');
 
-  // 1. CORRECCIÓN: Hacemos el SUM y COUNT asegurando tipos numéricos para que React los lea bien
+  // ✅ CORRECCIÓN: Retornamos directamente el resultado del query
   const result = await query(
     `SELECT o.*,
-            m.numero AS mesa_numero,
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero,
             u.nombre AS mesero_nombre,
+            o.nombre_cliente,
             (SELECT COALESCE(SUM(cantidad), 0) FROM ${TABLE.ORDEN_DETALLES} od WHERE od.orden_id = o.id AND od.activo = TRUE) AS cantidad_items,
-            (SELECT COALESCE(SUM(precio * cantidad), 0) FROM ${TABLE.ORDEN_DETALLES} od WHERE od.orden_id = o.id AND od.activo = TRUE) AS total_calculado
+            (SELECT COALESCE(SUM(precio * cantidad), 0) FROM ${TABLE.ORDEN_DETALLES} od WHERE od.orden_id = o.id AND od.activo = TRUE) AS total_calculado,
+            ((SELECT COALESCE(SUM(precio * cantidad), 0) FROM ${TABLE.ORDEN_DETALLES} od WHERE od.orden_id = o.id AND od.activo = TRUE) - COALESCE(o.descuento_total, 0)) AS total_real
      FROM ${TABLE.ORDENES} o
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
      JOIN ${TABLE.USUARIOS} u ON u.id = o.mesero_id
      WHERE ${whereClause}
      ORDER BY o.created_at DESC`,
     params
   );
 
-  // 2. CORRECCIÓN: Como el Frontend de la vista principal asume que existe "orden.detalles" para sacar el total, 
-  // le vamos a inyectar un "falso" array de detalles vacío solo para pasarle las matemáticas ya hechas.
-  return result.rows.map(row => ({
-    ...row,
-    // Esto hace que "orden.detalles?.length" ya no sea cero, y que el reduce del total funcione
-    detalles: Array.from({ length: row.cantidad_items || 0 }).map(() => ({ subtotal: 0 })),
-    total_real: parseFloat(row.total_calculado) // Puedes usar esta variable directa en el frontend si lo prefieres
-  }));
+  // ✅ Simplemente retornamos las filas, el frontend se encargará del resto
+  return result.rows;
 }
 
 async function getOrdenById(id) {
+  // ✅ CAMBIO: Agregado o.nombre_cliente en el SELECT
   const result = await query(
     `SELECT o.*,
-            m.numero AS mesa_numero,
-            u.nombre AS mesero_nombre
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero,
+            u.nombre AS mesero_nombre,
+            o.nombre_cliente
      FROM ${TABLE.ORDENES} o
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id /* <-- CAMBIO CLAVE: LEFT JOIN */
      JOIN ${TABLE.USUARIOS} u ON u.id = o.mesero_id
      WHERE o.id = $1 AND o.activo = TRUE`,
     [id]
@@ -102,9 +100,16 @@ async function getOrdenById(id) {
     [id]
   );
 
+  // ✅ CORRECCIÓN: Calcular total_real considerando el descuento
+  const totalBruto = detalles.rows.reduce((sum, d) => sum + parseFloat(d.subtotal || 0), 0);
+  const descuento = parseFloat(result.rows[0].descuento_total || 0);
+  const totalReal = totalBruto - descuento;
+
   return {
     ...result.rows[0],
     detalles: detalles.rows,
+    total_real: totalReal, // ✅ NUEVO
+    total: totalReal // Por si el frontend usa 'total' también
   };
 }
 
@@ -150,34 +155,39 @@ async function getOrdenActivaPorMesa(mesa_id) {
 }
 
 async function createOrden(data, usuario_id) {
-  const { mesa_id, observaciones } = data;
+  // ✅ CAMBIO: Agregado nombre_cliente en el destructuring
+  const { mesa_id, observaciones, tipo_pedido = 'salon', nombre_cliente } = data;
 
-  // Validar que la mesa existe y está libre o reservada
-  const mesa = await query(
-    `SELECT id, numero, estado FROM ${TABLE.MESAS} WHERE id = $1 AND activo = TRUE`,
-    [mesa_id]
-  );
+  // Si es en salón, validamos la mesa obligatoriamente
+  if (tipo_pedido === 'salon') {
+    if (!mesa_id) throw AppError.badRequest('Debe seleccionar una mesa para consumo en salón');
 
-  if (mesa.rows.length === 0) {
-    throw AppError.notFound('Mesa no encontrada');
+    const mesa = await query(
+      `SELECT id, numero, estado FROM ${TABLE.MESAS} WHERE id = $1 AND activo = TRUE`,
+      [mesa_id]
+    );
+
+    if (mesa.rows.length === 0) throw AppError.notFound('Mesa no encontrada');
+    if (!['libre', 'reservada'].includes(mesa.rows[0].estado)) {
+      throw AppError.conflict(`La mesa ${mesa.rows[0].numero} ya está ocupada`);
+    }
+
+    // ✅ CORRECCIÓN: Validación correcta para ver si la mesa ya tiene una orden activa
+    const ordenExistente = await query(
+      `SELECT id FROM ${TABLE.ORDENES} 
+       WHERE mesa_id = $1 AND estado IN ('abierta', 'enviada_cocina', 'preparando', 'lista') AND activo = TRUE`,
+      [mesa_id]
+    );
+
+    if (ordenExistente.rows.length > 0) throw AppError.conflict('Ya existe una orden activa en esta mesa');
   }
 
-  if (!['libre', 'reservada'].includes(mesa.rows[0].estado)) {
-    throw AppError.conflict(`La mesa ${mesa.rows[0].numero} ya está ocupada`);
+  // ✅ NUEVO: Validar nombre_cliente obligatorio para pedidos para llevar
+  if (tipo_pedido === 'llevar' && (!nombre_cliente || nombre_cliente.trim() === '')) {
+    throw AppError.badRequest('El nombre del cliente es requerido para pedidos para llevar');
   }
 
-  // Validar que no haya otra orden activa para esta mesa
-  const ordenExistente = await query(
-    `SELECT id FROM ${TABLE.ORDENES} 
-     WHERE mesa_id = $1 AND estado IN ('abierta', 'enviada_cocina', 'preparando', 'lista') AND activo = TRUE`,
-    [mesa_id]
-  );
-
-  if (ordenExistente.rows.length > 0) {
-    throw AppError.conflict('Ya existe una orden activa para esta mesa');
-  }
-
-  // Validar que el usuario es mesero o admin
+  // Validar rol de usuario (solo administradores o cajeros/meseros pueden crear)
   const usuario = await query(
     `SELECT u.id, r.nombre AS rol FROM ${TABLE.USUARIOS} u
      JOIN ${TABLE.ROLES} r ON r.id = u.rol_id
@@ -185,27 +195,26 @@ async function createOrden(data, usuario_id) {
     [usuario_id]
   );
 
-  if (usuario.rows.length === 0) {
-    throw AppError.unauthorized('Usuario no válido');
-  }
+  if (usuario.rows.length === 0) throw AppError.unauthorized('Usuario no válido');
 
-  if (!['mesero', 'administrador'].includes(usuario.rows[0].rol)) {
-    throw AppError.forbidden('Solo meseros pueden crear órdenes');
-  }
+  // Insertar la orden. Si es 'llevar', mesa_id será null automáticamente
+  const mesaFinalId = tipo_pedido === 'salon' ? mesa_id : null;
 
-  // Crear orden (numero_comanda se genera automáticamente en BD)
+  // ✅ CAMBIO: INSERT ahora incluye nombre_cliente
   const result = await query(
-    `INSERT INTO ${TABLE.ORDENES} (mesa_id, mesero_id, observaciones, estado, activo)
-     VALUES ($1, $2, $3, 'abierta', TRUE)
+    `INSERT INTO ${TABLE.ORDENES} (mesa_id, mesero_id, observaciones, estado, tipo_pedido, nombre_cliente, activo)
+     VALUES ($1, $2, $3, 'abierta', $4, $5, TRUE)
      RETURNING *`,
-    [mesa_id, usuario_id, observaciones || null]
+    [mesaFinalId, usuario_id, observaciones || null, tipo_pedido, nombre_cliente?.trim() || null]
   );
 
-  // Actualizar estado de la mesa a 'ocupada'
-  await query(
-    `UPDATE ${TABLE.MESAS} SET estado = 'ocupada', updated_at = NOW() WHERE id = $1`,
-    [mesa_id]
-  );
+  // Solo ocupamos la mesa si es pedido de salón
+  if (tipo_pedido === 'salon') {
+    await query(
+      `UPDATE ${TABLE.MESAS} SET estado = 'ocupada', updated_at = NOW() WHERE id = $1`,
+      [mesaFinalId]
+    );
+  }
 
   return result.rows[0];
 }
@@ -300,11 +309,14 @@ async function agregarDetalleOrden(orden_id, detalles, usuario_id) {
 
 // 👇 NUEVO: Agregamos el parámetro 'observaciones' con un valor por defecto vacío
 async function enviarACocina(orden_id, usuario_id, observaciones = {}) {
-  // Validar orden
+  // ✅ CAMBIO: Agregado o.nombre_cliente en el SELECT
   const orden = await query(
-    `SELECT o.*, m.numero AS mesa_numero, u.nombre AS mesero_nombre
+    `SELECT o.*, 
+            COALESCE(m.numero::text, 'Para Llevar') AS mesa_numero, 
+            u.nombre AS mesero_nombre,
+            o.nombre_cliente
      FROM ${TABLE.ORDENES} o
-     JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id
+     LEFT JOIN ${TABLE.MESAS} m ON m.id = o.mesa_id /* <-- AHORA ES LEFT JOIN */
      JOIN ${TABLE.USUARIOS} u ON u.id = o.mesero_id
      WHERE o.id = $1 AND o.activo = TRUE`,
     [orden_id]
@@ -390,6 +402,7 @@ async function enviarACocina(orden_id, usuario_id, observaciones = {}) {
     client.release();
   }
 }
+
 // NUEVA FUNCIÓN: Obtener solo los detalles NUEVOS para imprimir en cocina
 async function getDetallesNuevosParaCocina(orden_id) {
   const result = await query(
@@ -497,8 +510,8 @@ async function actualizarEstadoOrden(orden_id, nuevo_estado, usuario_id) {
       [nuevo_estado, orden_id]
     );
 
-    // Si se cancela o cobra, liberar la mesa
-    if (['cobrada', 'cancelada'].includes(nuevo_estado)) {
+    // ✅ CAMBIO: Solo liberar mesa si tiene mesa asignada (Para Llevar no tiene mesa)
+    if (['cobrada', 'cancelada'].includes(nuevo_estado) && orden.rows[0].mesa_id) {
       await client.query(
         `UPDATE ${TABLE.MESAS} SET estado = 'libre', updated_at = NOW() WHERE id = $1`,
         [orden.rows[0].mesa_id]
@@ -515,8 +528,82 @@ async function actualizarEstadoOrden(orden_id, nuevo_estado, usuario_id) {
   }
 }
 
-async function cancelarOrden(orden_id, usuario_id, motivo) {
-  return await actualizarEstadoOrden(orden_id, 'cancelada', usuario_id);
+// NUEVA FUNCIÓN: Anulación inteligente de órdenes
+async function anularOrdenYLiberarMesa(orden_id, usuario_id, motivo) {
+  // 1. Buscamos la orden y contamos cuántos productos activos tiene
+  const ordenResult = await query(
+    `SELECT o.id, o.estado, o.mesa_id, 
+            (SELECT COUNT(*) FROM ${TABLE.ORDEN_DETALLES} od WHERE od.orden_id = o.id AND od.activo = TRUE) AS cantidad_items
+     FROM ${TABLE.ORDENES} o 
+     WHERE o.id = $1 AND o.activo = TRUE`,
+    [orden_id]
+  );
+
+  if (ordenResult.rows.length === 0) {
+    throw AppError.notFound('Orden no encontrada');
+  }
+
+  const orden = ordenResult.rows[0];
+
+  if (['cobrada', 'cancelada'].includes(orden.estado)) {
+    throw AppError.conflict(`No se puede modificar una orden que ya está ${orden.estado}`);
+  }
+
+  const client = await getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    if (parseInt(orden.cantidad_items) === 0) {
+      // ESCENARIO A: Orden Vacía (Error de clic del mesero)
+      // Hacemos un "Soft-Delete" (activo = FALSE). Desaparece de los reportes y vistas.
+      await client.query(
+        `UPDATE ${TABLE.ORDENES} 
+         SET activo = FALSE, 
+             observaciones = $1, 
+             updated_at = NOW() 
+         WHERE id = $2`,
+        [`Anulada (Sin items) - Motivo: ${motivo || 'Error de creación'}`, orden_id]
+      );
+    } else {
+      // ESCENARIO B: Orden con Productos (Los clientes se fueron sin pagar)
+      // Cambiamos estado a 'cancelada' y activo = TRUE para mantener el rastro de auditoría.
+      await client.query(
+        `UPDATE ${TABLE.ORDENES} 
+         SET estado = 'cancelada', 
+             fecha_cierre = NOW(), 
+             observaciones_cierre = $1, 
+             updated_at = NOW() 
+         WHERE id = $2`,
+        [motivo || 'Cliente se retiró / Pedido anulado', orden_id]
+      );
+    }
+
+    // Finalmente: En CUALQUIER escenario, si la orden tenía mesa, la liberamos
+    if (orden.mesa_id) {
+      await client.query(
+        `UPDATE ${TABLE.MESAS} 
+         SET estado = 'libre', 
+             updated_at = NOW() 
+         WHERE id = $1`,
+        [orden.mesa_id]
+      );
+    }
+
+    await client.query('COMMIT');
+    return {
+      success: true,
+      message: parseInt(orden.cantidad_items) === 0
+        ? 'Mesa liberada. Orden vacía eliminada del registro.'
+        : 'Mesa liberada. Orden con productos anulada y registrada.'
+    };
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // NUEVA FUNCIÓN: Cerrar orden (cobrar)
@@ -556,11 +643,13 @@ async function cerrarOrden(orden_id, datosPago, usuario_id) {
       [total, metodo_pago, numero_comprobante, observaciones_cierre || null, orden_id]
     );
 
-    // Liberar la mesa
-    await client.query(
-      `UPDATE ${TABLE.MESAS} SET estado = 'libre', updated_at = NOW() WHERE id = $1`,
-      [orden.rows[0].mesa_id]
-    );
+    // ✅ CAMBIO: Solo liberar mesa si tiene mesa asignada (Para Llevar no tiene mesa)
+    if (orden.rows[0].mesa_id) {
+      await client.query(
+        `UPDATE ${TABLE.MESAS} SET estado = 'libre', updated_at = NOW() WHERE id = $1`,
+        [orden.rows[0].mesa_id]
+      );
+    }
 
     await client.query('COMMIT');
     return result.rows[0];
@@ -611,18 +700,93 @@ async function eliminarDetalleOrden(orden_id, detalle_id, usuario_id) {
   return { success: true, message: 'Detalle eliminado correctamente' };
 }
 
+// NUEVA FUNCIÓN: Aplicar cortesía (precio cero) a un plato devuelto o mala preparación
+async function aplicarCortesiaDetalle(orden_id, detalle_id, motivo, usuario_id) {
+  const orden = await query(
+    `SELECT id, estado FROM ${TABLE.ORDENES} WHERE id = $1 AND activo = TRUE`,
+    [orden_id]
+  );
+
+  if (orden.rows.length === 0) throw AppError.notFound('Orden no encontrada');
+  if (orden.rows[0].estado === 'cobrada') throw AppError.conflict('No se puede modificar una orden ya cobrada');
+
+  const detalle = await query(
+    `SELECT id, precio, cantidad FROM ${TABLE.ORDEN_DETALLES} WHERE id = $1 AND orden_id = $2 AND activo = TRUE`,
+    [detalle_id, orden_id]
+  );
+
+  if (detalle.rows.length === 0) throw AppError.notFound('Detalle no encontrado');
+
+  const client = await getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    // Mantenemos el registro (activo = TRUE), pero ponemos el precio en 0 y grabamos el motivo
+    await client.query(
+      `UPDATE ${TABLE.ORDEN_DETALLES} 
+       SET precio = 0, 
+           observaciones = $1, 
+           updated_at = NOW()
+       WHERE id = $2`,
+      [`[CORTESÍA/ANULADO] - Motivo: ${motivo || 'Error de cocina / Cliente no paga'}`, detalle_id]
+    );
+
+    await client.query('COMMIT');
+    return { success: true, message: 'Plato anulado de la cuenta (Cortesía aplicada)' };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// NUEVA FUNCIÓN: Aplicar descuento global (Soporta Porcentaje y Monto Fijo)
+async function aplicarDescuentoGlobal(orden_id, datosDescuento) {
+  const { tipo, valor, total_descontado, motivo } = datosDescuento;
+
+  const orden = await query(
+    `SELECT id, estado FROM pos.ordenes WHERE id = $1 AND activo = TRUE`,
+    [orden_id]
+  );
+
+  if (orden.rows.length === 0) throw AppError.notFound('Orden no encontrada');
+  if (orden.rows[0].estado === 'cobrada') throw AppError.conflict('No se puede modificar una orden ya cobrada');
+
+  // Actualizamos la orden con la nueva estructura
+  const result = await query(
+    `UPDATE pos.ordenes 
+     SET descuento_tipo = $1,
+         descuento_valor = $2,
+         descuento_total = $3, 
+         motivo_descuento = $4, 
+         updated_at = NOW() 
+     WHERE id = $5 RETURNING *`,
+    [tipo, valor, total_descontado, motivo || 'Descuento manual', orden_id]
+  );
+
+  return {
+    success: true,
+    message: 'Descuento aplicado correctamente',
+    orden: result.rows[0]
+  };
+}
+
 module.exports = {
   getAllOrdenes,
   getOrdenById,
   getOrdenActivaPorMesa,
   createOrden,
   agregarDetalleOrden,
-  eliminarDetalleOrden,          // ← NUEVO
+  eliminarDetalleOrden,
   enviarACocina,
   getDetallesParaCocina,
   getDetallesNuevosParaCocina,
   actualizarEstadoOrden,
-  cancelarOrden,
+  anularOrdenYLiberarMesa,
   cerrarOrden,
   getProductosParaMenu,
+  aplicarCortesiaDetalle,
+  aplicarDescuentoGlobal,
 };

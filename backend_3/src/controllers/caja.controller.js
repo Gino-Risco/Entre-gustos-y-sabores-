@@ -14,6 +14,16 @@ const obtenerEstado = catchAsync(async (req, res) => {
   });
 });
 
+// NUEVO: Obtener el fondo sugerido del día anterior
+const obtenerFondoSugerido = catchAsync(async (req, res) => {
+  const fondoSugerido = await cajaService.obtenerFondoSugerido();
+  
+  res.json({
+    success: true,
+    data: { fondoSugerido },
+  });
+});
+
 const abrir = catchAsync(async (req, res) => {
   const { monto_inicial, observaciones } = req.body;
 
@@ -52,22 +62,31 @@ const registrarMovimiento = catchAsync(async (req, res) => {
   });
 });
 
+// ACTUALIZADO: Ahora recibe el fondo_reservado_proximo
 const cerrar = catchAsync(async (req, res) => {
   const {
     total_efectivo,
     total_tarjeta,
     total_otro,
     monto_final_real,
+    fondo_reservado_proximo, // <-- NUEVO CAMPO
     observaciones
   } = req.body;
 
-  if (!monto_final_real) {
+  if (monto_final_real === undefined || monto_final_real === null) {
     throw AppError.badRequest('El monto final real es requerido para el cierre');
   }
 
   const cierre = await cajaService.cerrarCaja(
-    req.params.id,
-    { total_efectivo, total_tarjeta, total_otro, monto_final_real, observaciones },
+    req.params.id, // o req.params.caja_id dependiendo de tus rutas
+    { 
+      total_efectivo, 
+      total_tarjeta, 
+      total_otro, 
+      monto_final_real, 
+      fondo_reservado_proximo, // <-- SE ENVÍA AL SERVICE
+      observaciones 
+    },
     req.user.id
   );
 
@@ -82,6 +101,28 @@ const cerrar = catchAsync(async (req, res) => {
       cierre,
       alerta_diferencia: cierre.diferencia !== 0,
     },
+  });
+});
+
+// NUEVO: Registrar un corte/arqueo parcial
+const registrarArqueoParcial = catchAsync(async (req, res) => {
+  const { monto_contado, observaciones } = req.body;
+  const caja_id = req.params.id; // Asegúrate de que coincida con el parámetro de tu ruta
+
+  if (monto_contado === undefined || monto_contado === null) {
+    throw AppError.badRequest('El monto contado físicamente es requerido');
+  }
+
+  const resultado = await cajaService.registrarArqueoParcial(
+    caja_id,
+    { monto_contado, observaciones },
+    req.user.id
+  );
+
+  res.status(201).json({
+    success: true,
+    message: 'Arqueo parcial registrado correctamente',
+    data: resultado,
   });
 });
 
@@ -105,7 +146,7 @@ const obtenerReporte = catchAsync(async (req, res) => {
     data: { reporte },
   });
 });
-// Controller para getResumenDelDia
+
 const getResumenDelDia = catchAsync(async (req, res) => {
   const cajaAbierta = await cajaService.obtenerCajaAbierta();
 
@@ -124,7 +165,6 @@ const getResumenDelDia = catchAsync(async (req, res) => {
   });
 });
 
-// Controller para getMovimientosDelDia
 const getMovimientosDelDia = catchAsync(async (req, res) => {
   const cajaAbierta = await cajaService.obtenerCajaAbierta();
 
@@ -146,13 +186,26 @@ const getMovimientosDelDia = catchAsync(async (req, res) => {
   });
 });
 
+async function obtenerHistorialCajas(req, res, next) {
+  try {
+    // Llama al servicio que creamos antes
+    const cajas = await cajaService.obtenerHistorialCajas();
+    res.json({ data: { cajas } });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   obtenerEstado,
+  obtenerFondoSugerido,     // <-- NUEVO
   abrir,
   registrarMovimiento,
   cerrar,
+  registrarArqueoParcial,   // <-- NUEVO
   obtenerMovimientos,
   obtenerReporte,
-  getResumenDelDia,      // ← NUEVO
+  getResumenDelDia,
   getMovimientosDelDia,
+  obtenerHistorialCajas,
 };

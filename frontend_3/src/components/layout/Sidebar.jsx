@@ -17,13 +17,14 @@ import {
   History,
   ChevronDown,
   ChevronRight,
-  Utensils
+  Utensils,
+  FileText
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth.store';
 import { cn } from '@/lib/utils';
 
-// Menú principal (Colores ajustados a 400 para que resalten en el fondo oscuro)
-const menuItems = [
+// 1. Menú Top (Antes de Ventas)
+const mainMenuTop = [
   {
     title: 'Dashboard',
     icon: LayoutDashboard,
@@ -44,14 +45,29 @@ const menuItems = [
     path: '/pedidos',
     roles: ['administrador', 'cajero', 'mesero'],
     color: 'text-purple-400'
-  },
+  }
+];
+
+// 2. NUEVO SUBMENÚ: Ventas
+const ventasSubMenu = [
   {
-    title: 'Ventas',
+    title: 'Cobrar Mesa',
     icon: ShoppingBag,
     path: '/ventas',
     roles: ['administrador', 'cajero'],
     color: 'text-pink-400'
   },
+  {
+    title: 'Historial',
+    icon: FileText,
+    path: '/historial-ventas',
+    roles: ['administrador', 'cajero'],
+    color: 'text-pink-300'
+  }
+];
+
+// 3. Menú Bottom (Después de Ventas)
+const mainMenuBottom = [
   {
     title: 'Cocina',
     icon: ChefHat,
@@ -89,6 +105,7 @@ const menuItems = [
   }
 ];
 
+// 4. Submenús existentes
 const productosSubMenu = [
   {
     title: 'Carta / Platos',
@@ -149,6 +166,7 @@ export const Sidebar = ({ isOpen, setIsOpen }) => {
   const location = useLocation();
   const { user, logout } = useAuthStore();
 
+  const [isVentasOpen, setIsVentasOpen] = useState(false);
   const [isProductosOpen, setIsProductosOpen] = useState(false);
   const [isInventarioOpen, setIsInventarioOpen] = useState(false);
 
@@ -166,13 +184,13 @@ export const Sidebar = ({ isOpen, setIsOpen }) => {
     if (setIsOpen) setIsOpen(false);
   };
 
+  const isVentasActive = ventasSubMenu.some(item => location.pathname === item.path);
   const isProductosActive = productosSubMenu.some(item => location.pathname === item.path);
   const isInventarioActive = inventarioSubMenu.some(item => location.pathname === item.path);
 
 return (
     <aside
       className={cn(
-        // FONDO AZUL NOCHE SUAVE (slate-800) Y BORDE (slate-700)
         "fixed left-0 top-0 z-40 h-screen w-64 bg-slate-800 border-r border-slate-700 transition-transform duration-300 ease-in-out lg:translate-x-0",
         isOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
       )}
@@ -191,10 +209,11 @@ return (
 
         {/* Navigation Section */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
-          {menuItems.map((item) => {
+          
+          {/* --- 1. RENDER MENÚ TOP --- */}
+          {mainMenuTop.map((item) => {
             if (!canAccessMenu(item.roles)) return null;
             const isActive = location.pathname === item.path;
-
             return (
               <NavLink
                 key={item.path}
@@ -215,7 +234,77 @@ return (
             );
           })}
 
-          {/* ACCORDION: Productos */}
+          {/* --- 2. ACCORDION: VENTAS --- */}
+          {canAccessMenu(['administrador', 'cajero']) && (
+            <div className="space-y-1">
+              <button
+                onClick={() => setIsVentasOpen(!isVentasOpen)}
+                className={cn(
+                  'w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200',
+                  isVentasActive || isVentasOpen
+                    ? 'bg-slate-700 text-white'
+                    : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <ShoppingBag className={cn('h-5 w-5', isVentasActive || isVentasOpen ? 'text-pink-400' : 'text-slate-400')} />
+                  <span>Ventas</span>
+                </div>
+                {isVentasOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+
+              {isVentasOpen && (
+                <div className="ml-4 pl-4 border-l-2 border-slate-600 space-y-1 mt-1">
+                  {ventasSubMenu.map((item) => {
+                    if (!canAccessMenu(item.roles)) return null;
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <NavLink
+                        key={item.path}
+                        to={item.path}
+                        onClick={handleLinkClick}
+                        className={({ isActive }) =>
+                          cn(
+                            'flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                            isActive ? 'bg-slate-700 text-pink-400' : 'text-slate-400 hover:text-white'
+                          )
+                        }
+                      >
+                        <item.icon className={cn('h-4 w-4', isActive ? 'text-pink-400' : item.color)} />
+                        {item.title}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* --- 3. RENDER MENÚ BOTTOM --- */}
+          {mainMenuBottom.map((item) => {
+            if (!canAccessMenu(item.roles)) return null;
+            const isActive = location.pathname === item.path;
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                onClick={handleLinkClick}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200',
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  )
+                }
+              >
+                <item.icon className={cn('h-5 w-5', isActive ? 'text-white' : item.color)} />
+                {item.title}
+              </NavLink>
+            );
+          })}
+
+          {/* --- 4. ACCORDION: PRODUCTOS --- */}
           {canAccessMenu(['administrador']) && (
             <div className="space-y-1">
               <button
@@ -261,7 +350,7 @@ return (
             </div>
           )}
 
-          {/* ACCORDION: Inventario */}
+          {/* --- 5. ACCORDION: INVENTARIO --- */}
           {canAccessMenu(['administrador']) && (
             <div className="space-y-1">
               <button

@@ -2,7 +2,7 @@ const { query } = require('../config/database');
 
 async function getVentasPorPeriodo(fecha_desde, fecha_hasta, agrupar_por = 'dia') {
   let fechaFormat = '';
-  
+
   switch (agrupar_por) {
     case 'dia':
       fechaFormat = "DATE_TRUNC('day', v.created_at)";
@@ -179,47 +179,240 @@ async function getAlertasStockPendientes() {
   return result.rows;
 }
 
-async function getDashboardResumen(fecha_desde, fecha_hasta) {
-  // Ventas del período
-  const ventasResult = await query(
+// En services/reportes.service.js
+
+async function getDashboardResumen(fecha_desde) {
+  // Si no viene fecha, usamos el día actual en Perú
+  const fechaConsulta = fecha_desde || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+
+  const ventasHoyResult = await query(
     `SELECT 
             COUNT(*) AS total_ventas,
             COALESCE(SUM(total), 0) AS total_ingresos,
             COALESCE(AVG(total), 0) AS ticket_promedio
      FROM pos.ventas
-     WHERE created_at >= $1 AND created_at <= $2 AND activo = TRUE`,
-    [fecha_desde, fecha_hasta]
+     -- FORZAMOS EL RANGO HORARIO DE PERÚ
+    WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima')::date = $1::date
+       AND activo = TRUE`,
+    [fechaConsulta]
   );
 
-  // Productos con stock bajo
+  // 2. VENTAS DE AYER (Le restamos 1 día a la fecha consultada)
+  const ventasAyerResult = await query(
+    `SELECT 
+            COALESCE(SUM(total), 0) AS total_ingresos
+     FROM pos.ventas
+     WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima')::date = ($1::date - INTERVAL '1 day')::date
+       AND activo = TRUE`,
+    [fechaConsulta]
+  );
+
+  // 3. MATEMÁTICA SENIOR: Calcular el porcentaje de crecimiento
+  const ingresosHoy = parseFloat(ventasHoyResult.rows[0].total_ingresos);
+  const ingresosAyer = parseFloat(ventasAyerResult.rows[0].total_ingresos);
+
+  let crecimiento_porcentaje = 0;
+  let tendencia = 'neutral'; // puede ser: 'sube', 'baja', 'neutral'
+
+  if (ingresosAyer > 0) {
+    // Fórmula clásica: ((Hoy - Ayer) / Ayer) * 100
+    crecimiento_porcentaje = ((ingresosHoy - ingresosAyer) / ingresosAyer) * 100;
+  } else if (ingresosAyer === 0 && ingresosHoy > 0) {
+    // Si ayer no vendió nada y hoy sí, subió al 100%
+    crecimiento_porcentaje = 100;
+  }
+
+  // Definimos la tendencia para facilitarle la vida al Frontend
+  if (crecimiento_porcentaje > 0) tendencia = 'sube';
+  else if (crecimiento_porcentaje < 0) tendencia = 'baja';
+
+  // 2. Productos con stock bajo
   const stockBajoResult = await query(
     `SELECT COUNT(*) AS total FROM inventario.v_stock_bajo`
   );
 
-  // Alertas pendientes
+  // 3. Alertas pendientes
   const alertasResult = await query(
     `SELECT COUNT(*) AS total FROM inventario.v_alertas_pendientes`
   );
 
-  // Caja abierta
+  // 4. Caja abierta
   const cajaAbiertaResult = await query(
     `SELECT COUNT(*) AS total FROM pos.caja_aperturas WHERE estado = 'abierta' AND activo = TRUE`
   );
 
-  // Órdenes activas
+  // 5. Órdenes activas
   const ordenesActivasResult = await query(
-    `SELECT COUNT(*) AS total FROM pos.ordenes WHERE estado IN ('abierta', 'enviada_cocina', 'preparando', 'lista') AND activo = TRUE`
+    `SELECT COUNT(*) AS total FROM pos.ordenes 
+     WHERE estado IN ('abierta', 'enviada_cocina', 'preparando', 'lista') 
+     AND activo = TRUE`
   );
 
   return {
-    ventas: ventasResult.rows[0],
+    ventas: ventasHoyResult.rows[0],
+    comparacion_ventas: {
+      porcentaje: Math.abs(crecimiento_porcentaje).toFixed(1), // Math.abs quita el signo negativo
+      tendencia: tendencia, // 'sube', 'baja' o 'neutral'
+      texto: `${Math.abs(crecimiento_porcentaje).toFixed(1)}% vs ayer`
+    },
     stock_bajo: stockBajoResult.rows[0].total,
     alertas_pendientes: alertasResult.rows[0].total,
     caja_abierta: cajaAbiertaResult.rows[0].total > 0,
     ordenes_activas: ordenesActivasResult.rows[0].total,
+
   };
 }
 
+/**
+ * Ventas por hora del día (para gráfico de línea)
+ * @param {string} fecha - Fecha en formato YYYY-MM-DD (opcional, default: hoy)
+ */
+// En services/reportes.service.js -> getVentasPorHora
+async function getVentasPorHora(fecha) {
+  const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+
+  const result = await query(
+    `SELECT 
+       -- Extraemos la hora ajustada a nuestra zona horaria para el gráfico
+       EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima') AS hora,
+       COUNT(*) AS total_ventas,
+       COALESCE(SUM(total), 0) AS total_ingresos
+     FROM pos.ventas
+     WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima')::date = $1::date
+       AND activo = TRUE
+     GROUP BY 1
+     ORDER BY hora ASC`,
+    [fechaConsulta]
+  );
+
+  // Completar horas sin ventas con 0 para gráfico continuo
+  const horasCompletas = [];
+  for (let h = 0; h < 24; h++) {
+    const horaData = result.rows.find(r => parseInt(r.hora) === h);
+    horasCompletas.push({
+      hora: h,
+      hora_label: `${h.toString().padStart(2, '0')}:00`,
+      total_ventas: horaData ? parseInt(horaData.total_ventas) : 0,
+      total_ingresos: horaData ? parseFloat(horaData.total_ingresos) : 0
+    });
+  }
+
+  return horasCompletas;
+}
+
+/**
+ * Ventas por método de pago del día (para gráfico doughnut)
+ * @param {string} fecha - Fecha en formato YYYY-MM-DD (opcional, default: hoy)
+ */
+async function getVentasPorMetodoPagoHoy(fecha) {
+  const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+
+  const result = await query(
+    `SELECT 
+        metodo_pago,
+        COUNT(*) AS total_ventas,
+        COALESCE(SUM(total), 0) AS total_ingresos
+     FROM pos.ventas
+     -- CAMBIO AQUÍ: Usamos el rango de tiempo exacto de Perú
+    WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima')::date = $1::date
+       AND activo = TRUE
+     GROUP BY metodo_pago
+     ORDER BY total_ingresos DESC`,
+    [fechaConsulta]
+  );
+
+  return result.rows.map(row => ({
+    metodo: row.metodo_pago,
+    label: row.metodo_pago.charAt(0).toUpperCase() + row.metodo_pago.slice(1),
+    value: parseFloat(row.total_ingresos),
+    count: parseInt(row.total_ventas)
+  }));
+}
+
+/**
+ * Top 5 productos más vendidos del día
+ * @param {string} fecha - Fecha en formato YYYY-MM-DD (opcional, default: hoy)
+ * @param {number} limite - Cantidad de productos a retornar (default: 5)
+ */
+async function getTopProductosHoy(fecha, limite = 5) {
+  const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+
+  const result = await query(
+    `SELECT 
+        p.id,
+        p.nombre,
+        c.nombre AS categoria,
+        SUM(vd.cantidad) AS total_vendido,
+        SUM(vd.subtotal) AS total_ingresos
+     FROM pos.ventas_detalle vd
+     JOIN inventario.productos p ON p.id = vd.producto_id
+     JOIN inventario.categorias c ON c.id = p.categoria_id
+     JOIN pos.ventas v ON v.id = vd.venta_id
+     WHERE (v.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Lima')::date = $1::date
+       AND v.activo = TRUE
+       AND vd.activo = TRUE
+       AND vd.es_incluido_menu = FALSE
+     GROUP BY p.id, p.nombre, c.nombre
+     ORDER BY total_vendido DESC
+     LIMIT $2`,
+    [fechaConsulta, limite]
+  );
+
+  return result.rows.map(row => ({
+    id: row.id,
+    nombre: row.nombre,
+    categoria: row.categoria,
+    vendido: parseInt(row.total_vendido),
+    ingresos: parseFloat(row.total_ingresos)
+  }));
+}
+/**
+ * Últimas órdenes activas (para lista en dashboard)
+ * @param {number} limite - Cantidad de órdenes a retornar (default: 5)
+ */
+// En services/reportes.service.js -> getUltimasOrdenesActivas
+async function getUltimasOrdenesActivas(limite = 5) {
+  const result = await query(
+    `SELECT 
+       o.id,
+       o.numero_comanda,
+       o.estado,
+       o.tipo_pedido,
+       o.nombre_cliente,
+       m.numero AS mesa_numero,
+       u.nombre AS mesero,
+       o.created_at,
+       -- Calculamos el total acumulado de la orden sumando los detalles activos
+       COALESCE((
+         SELECT SUM(od.subtotal) 
+         FROM pos.orden_detalles od 
+         WHERE od.orden_id = o.id AND od.activo = TRUE
+       ), 0) AS total_cobrable,
+       EXTRACT(EPOCH FROM (NOW() - o.created_at)) / 60 AS minutos_abierta
+     FROM pos.ordenes o
+     -- CAMBIO CLAVE: LEFT JOIN permite que vengan órdenes sin mesa
+     LEFT JOIN pos.mesas m ON m.id = o.mesa_id 
+     JOIN pos.usuarios u ON u.id = o.mesero_id
+     WHERE o.estado IN ('abierta', 'enviada_cocina', 'preparando', 'lista')
+       AND o.activo = TRUE
+     ORDER BY o.created_at DESC
+     LIMIT $1`,
+    [limite]
+  );
+
+  return result.rows.map(row => ({
+    id: row.id,
+    comanda: row.numero_comanda,
+    estado: row.estado,
+    tipo: row.tipo_pedido,
+    cliente: row.nombre_cliente,
+    mesa: row.mesa_numero, // Número de mesa
+    mesero: row.mesero,
+    hora: row.created_at,
+    minutos: Math.round(parseFloat(row.minutos_abierta)),
+    total: parseFloat(row.total_cobrable) // Nuevo campo: Monto acumulado
+  }));
+}
 module.exports = {
   getVentasPorPeriodo,
   getProductosMasVendidos,
@@ -230,4 +423,8 @@ module.exports = {
   getCajaReporte,
   getAlertasStockPendientes,
   getDashboardResumen,
+  getVentasPorHora,
+  getVentasPorMetodoPagoHoy,
+  getTopProductosHoy,
+  getUltimasOrdenesActivas
 };

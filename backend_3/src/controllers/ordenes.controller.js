@@ -84,18 +84,19 @@ const actualizarEstado = catchAsync(async (req, res) => {
     res.json({ success: true, data: { orden } });
 });
 
+// El nombre de la constante sigue siendo "cancelar" para no romper tus rutas
 const cancelar = catchAsync(async (req, res) => {
     const { motivo } = req.body;
 
-    const orden = await ordenesService.cancelarOrden(
+    // PERO por dentro, llama a tu nueva función del servicio
+    const resultado = await ordenesService.anularOrdenYLiberarMesa(
         req.params.id,
         req.user.id,
         motivo || null
     );
 
-    res.json({ success: true, message: 'Orden cancelada', data: { orden } });
+    res.json(resultado);
 });
-
 // NUEVA FUNCIÓN: Obtener productos para Menú del Día
 const getProductosParaMenu = catchAsync(async (req, res) => {
     const productos = await ordenesService.getProductosParaMenu();
@@ -146,16 +147,65 @@ const cerrar = catchAsync(async (req, res) => {
     });
 });
 
+const aplicarCortesiaDetalle = catchAsync(async (req, res) => {
+    const { id: ordenId, detalleId: detalle_id } = req.params;
+
+    const { motivo } = req.body;
+
+    const resultado = await ordenesService.aplicarCortesiaDetalle(
+        ordenId,
+        detalle_id,
+        motivo,
+        req.user.id
+    );
+
+    res.json({
+        success: true,
+        message: 'Cortesía aplicada correctamente',
+        data: resultado,
+    });
+});
+
+const aplicarDescuentoGlobal = catchAsync(async (req, res) => {
+    const { id: ordenId } = req.params;
+    
+    // 1. Ya no destructuramos "porcentaje", sacamos todo lo que manda el nuevo Frontend
+    const { tipo, valor, total_descontado, motivo } = req.body;
+
+    // 2. Agrupamos esos datos en el objeto que espera tu Servicio
+    const datosDescuento = {
+        tipo,
+        valor,
+        total_descontado,
+        motivo
+    };
+
+    // 3. Llamamos a tu servicio pasándole el objeto y el ID del cajero
+    const resultado = await ordenesService.aplicarDescuentoGlobal(
+        ordenId,
+        datosDescuento,
+        req.user.id // ¡Muy bien pensado dejar esto aquí!
+    );
+
+    res.json({
+        success: true,
+        message: 'Descuento aplicado correctamente',
+        data: resultado,
+    });
+});
+
 module.exports = {
     getAll,
     getById,
     getActivaPorMesa,
     create,
     agregarDetalles,
-    eliminarDetalle,        // ← NUEVO
+    eliminarDetalle,
     enviarCocina,
     actualizarEstado,
     cancelar,
     getProductosParaMenu,
     cerrar,
+    aplicarCortesiaDetalle,
+    aplicarDescuentoGlobal,
 };

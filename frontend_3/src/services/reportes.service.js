@@ -3,10 +3,12 @@ import api from './api';
 
 export const reportesService = {
   async getDashboard() {
+    // ✅ FIX: Usar zona horaria de Perú, no UTC
+    const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
     const response = await api.get('/reportes/dashboard', {
       params: {
-        fecha_desde: new Date().toISOString().split('T')[0],
-        fecha_hasta: new Date().toISOString().split('T')[0],
+        fecha_desde: hoy,
+        fecha_hasta: hoy,
       },
     });
     return response.data.data.dashboard;
@@ -55,8 +57,10 @@ export const reportesService = {
   },
 
   async getCajaReporte(fecha) {
+    // ✅ FIX: Usar zona horaria de Perú
+    const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
     const response = await api.get('/reportes/caja', {
-      params: { fecha: fecha || new Date().toISOString().split('T')[0] },
+      params: { fecha: fechaConsulta },
     });
     return response.data.data.reporte;
   },
@@ -64,5 +68,42 @@ export const reportesService = {
   async getAlertasStock() {
     const response = await api.get('/reportes/alertas-stock');
     return response.data.data.alertas;
+  },
+
+  async getVentasPorHora(fecha) {
+    // ✅ FIX: Usar zona horaria de Perú
+    const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+    const response = await api.get('/reportes/dashboard/ventas-hora', {
+      params: { fecha: fechaConsulta },
+    });
+    return response.data.data.ventas_por_hora;
+  },
+
+  async getMetodosPago(fecha) {
+    // ✅ FIX: Usar zona horaria de Perú
+    const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+    const response = await api.get('/reportes/dashboard/metodos-pago', {
+      params: { fecha: fechaConsulta },
+    });
+    return response.data.data.metodos_pago;
+  },
+
+  async getTopProductos(fecha, limite = 5) {
+    // ✅ FIX: Usar zona horaria de Perú
+    const fechaConsulta = fecha || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+    const response = await api.get('/reportes/dashboard/top-productos', {
+      params: {
+        fecha: fechaConsulta,
+        limite
+      },
+    });
+    return response.data.data.top_productos;
+  },
+
+  async getOrdenesActivas(limite = 5) {
+    const response = await api.get('/reportes/dashboard/ordenes-activas', {
+      params: { limite },
+    });
+    return response.data.data.ordenes;
   },
 };

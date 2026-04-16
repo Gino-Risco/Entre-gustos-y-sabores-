@@ -35,4 +35,21 @@ router.get('/caja', requireRole(ROLES.ADMINISTRADOR, ROLES.CAJERO), reportesCont
 // GET /api/reportes/alertas-stock - Alertas de stock pendientes (admin)
 router.get('/alertas-stock', requireRole(ROLES.ADMINISTRADOR), reportesController.getAlertasStock);
 
+// ==================== NUEVAS RUTAS PARA DASHBOARD ====================
+
+// GET /api/reportes/dashboard/ventas-hora - Ventas por hora (todos los roles)
+router.get('/dashboard/ventas-hora', reportesController.getVentasPorHora);
+
+// GET /api/reportes/dashboard/metodos-pago - Métodos de pago hoy (admin, cajero)
+router.get('/dashboard/metodos-pago',
+    requireRole(ROLES.ADMINISTRADOR, ROLES.CAJERO),
+    reportesController.getVentasPorMetodoPagoHoy
+);
+
+// GET /api/reportes/dashboard/top-productos - Top productos hoy (todos los roles)
+router.get('/dashboard/top-productos', reportesController.getTopProductosHoy);
+
+// GET /api/reportes/dashboard/ordenes-activas - Últimas órdenes (todos los roles)
+router.get('/dashboard/ordenes-activas', reportesController.getUltimasOrdenesActivas);
+
 module.exports = router;

@@ -5,9 +5,11 @@ import { Login } from '@/pages/Login';
 import { Dashboard } from '@/pages/Dashboard';
 import { Mesas } from '@/pages/Mesas';
 import { Pedidos } from '@/pages/Pedidos';
+import { HistorialPedidos } from '@/pages/ventas/HistorialPedidos';
 import { ProductoForm } from '@/pages/productos/ProductoForm';
 import { Categorias } from '@/pages/Categorias';
-import { Ventas } from '@/pages/Ventas';
+import { Ventas } from '@/pages/ventas/Cobrar';
+import { HistorialVentas } from '@/pages/ventas/HistorialVentas';
 import { Caja } from '@/pages/Caja';
 import { Compras } from '@/pages/inventario/Compra/Compras';
 import { CompraCrear } from '@/pages/inventario/Compra/CompraCrear';
@@ -50,6 +52,10 @@ export const router = createBrowserRouter([
         path: '/pedidos',
         element: <ProtectedRoute allowedRoles={['administrador', 'cajero', 'mesero']}><Pedidos /></ProtectedRoute>
       },
+      {
+        path: '/historial-pedidos',
+        element: <ProtectedRoute allowedRoles={['administrador', 'cajero']}><HistorialPedidos /></ProtectedRoute>
+      },
 
       // ==========================================
       // 💵 ZONA DE CAJA Y VENTAS (Admin, Cajero)
@@ -61,6 +67,10 @@ export const router = createBrowserRouter([
       {
         path: '/ventas',
         element: <ProtectedRoute allowedRoles={['administrador', 'cajero']}><Ventas /></ProtectedRoute>
+      },
+      {
+        path: '/historial-ventas',
+        element: <ProtectedRoute allowedRoles={['administrador', 'cajero']}><HistorialVentas /></ProtectedRoute>
       },
 
       // ==========================================

@@ -30,7 +30,7 @@ app.use(helmet());
 // 👇 NUEVA CONFIGURACIÓN DE CORS 👇
 const allowedOrigins = [
   'http://localhost:5173',
-  'http://192.168.1.38:5173',
+  'http://192.168.1.36:5173',
   process.env.FRONTEND_URL // Por si acaso tienes otra URL en tu .env
 ];
 
@@ -45,7 +45,7 @@ app.use(cors({
   },
   credentials: true
 }));
-// 👆 FIN DE LA NUEVA CONFIGURACIÓN 👇
+//  FIN DE LA NUEVA CONFIGURACIÓN 
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

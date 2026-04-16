@@ -40,6 +40,10 @@ router.put('/:id/estado', requireRole(ROLES.ADMINISTRADOR, ROLES.MESERO), ordene
 // PUT /api/ordenes/:id/cancelar - Cancelar orden (mesero, admin)
 router.put('/:id/cancelar', requireRole(ROLES.ADMINISTRADOR, ROLES.MESERO), ordenesController.cancelar);
 
+router.put('/:id/detalles/:detalleId/cortesia', requireRole(ROLES.ADMINISTRADOR, ROLES.CAJERO), ordenesController.aplicarCortesiaDetalle);
+
+router.put('/:id/descuento', requireRole(ROLES.ADMINISTRADOR, ROLES.CAJERO), ordenesController.aplicarDescuentoGlobal);
+
 // POST /api/ordenes/:id/cerrar - Cerrar orden y cobrar (cajero, admin)
 router.post('/:id/cerrar', requireRole(ROLES.ADMINISTRADOR, ROLES.CAJERO), ordenesController.cerrar);
 

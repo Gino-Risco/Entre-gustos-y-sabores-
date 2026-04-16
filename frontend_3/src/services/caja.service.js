@@ -12,10 +12,20 @@ export const cajaService = {
   },
 
   /**
+   * Obtener el fondo sugerido para la apertura (basado en el último cierre)
+   * GET /api/caja/fondo-sugerido
+   */
+  async obtenerFondoSugerido() {
+    const response = await api.get('/caja/fondo-sugerido');
+    return response.data.data.fondoSugerido;
+  },
+
+  /**
    * Abrir nueva caja
-   * POST /api/caja/apertura  ← ¡CORREGIDO! (no era /abrir)
+   * POST /api/caja/apertura
    */
   async abrirCaja(data) {
+    // data debe incluir: { monto_inicial, observaciones }
     const response = await api.post('/caja/apertura', data);
     return response.data.data.caja;
   },
@@ -49,11 +59,29 @@ export const cajaService = {
   },
 
   /**
+   * Registrar arqueo parcial / corte de caja
+   * POST /api/caja/:id/arqueo
+   */
+  async registrarArqueoParcial(cajaId, data) {
+    // data debe incluir: { monto_contado, observaciones }
+    const response = await api.post(`/caja/${cajaId}/arqueo`, data);
+    return response.data.data;
+  },
+
+  /**
    * Cerrar caja (con turno)
    * POST /api/caja/:id/cierre
    */
   async cerrarCaja(cajaId, data) {
+    // AHORA data debe incluir: { total_efectivo, total_tarjeta, total_otro, monto_final_real, fondo_reservado_proximo, observaciones }
     const response = await api.post(`/caja/${cajaId}/cierre`, data);
-    return response.data.data.cierre;
+    return response.data.data; 
+    // Nota: Retorno todo el objeto data porque incluye 'cierre' y 'alerta_diferencia', lo cual te servirá para mostrar alertas en React.
+  },
+
+  async getHistorialCajas() {
+    const response = await api.get('/caja/historial');
+    // Asumiendo que tu backend devuelve la data dentro de "cajas" o un array directo
+    return response.data.data.cajas || response.data.data;
   },
 };

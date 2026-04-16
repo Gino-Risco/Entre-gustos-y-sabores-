@@ -45,7 +45,6 @@ async function getAllKardex(filtros = {}) {
             p.nombre AS producto_nombre,
             p.unidad_medida,
             u.nombre AS usuario_nombre,
-            -- AQUÍ ESTABA EL ERROR: Cambiamos 'nombre' por 'referencia'
             (SELECT referencia FROM inventario.kardex WHERE id = k.reversion_de) AS reversion_de_nombre
      FROM inventario.kardex k
      JOIN inventario.productos p ON p.id = k.producto_id
@@ -101,7 +100,6 @@ async function getKardexPorProducto(producto_id, limite = 100) {
 }
 
 async function revertirMovimiento(kardex_id, usuario_id, motivo) {
-  // Validar que el usuario es administrador
   const usuario = await query(
     `SELECT u.id, r.nombre AS rol FROM pos.usuarios u
      JOIN pos.roles r ON r.id = u.rol_id
@@ -113,7 +111,6 @@ async function revertirMovimiento(kardex_id, usuario_id, motivo) {
     throw AppError.forbidden('Solo administradores pueden revertir movimientos de kardex');
   }
 
-  // Validar que el movimiento existe y no es ya una reversión
   const movimiento = await query(
     `SELECT id, tipo_movimiento, reversion_de FROM inventario.kardex WHERE id = $1`,
     [kardex_id]
@@ -132,7 +129,6 @@ async function revertirMovimiento(kardex_id, usuario_id, motivo) {
   try {
     await client.query('BEGIN');
 
-    // Llamar a la función de la base de datos para revertir
     const result = await client.query(
       `SELECT inventario.fn_revertir_kardex($1, $2, $3) AS nuevo_kardex_id`,
       [kardex_id, usuario_id, motivo || 'Reversión manual']
@@ -160,8 +156,10 @@ async function getResumenKardex(fecha_desde, fecha_hasta) {
             p.unidad_medida,
             p.stock_actual,
             p.stock_minimo,
-            COALESCE(SUM(CASE WHEN k.tipo_movimiento IN ('compra', 'ajuste', 'reversion') THEN k.cantidad ELSE 0 END), 0) AS total_entradas,
-            COALESCE(SUM(CASE WHEN k.tipo_movimiento IN ('venta', 'salida_cocina', 'merma') THEN k.cantidad ELSE 0 END), 0) AS total_salidas,
+            -- AÑADIDOS LOS NUEVOS TIPOS DE ENTRADA
+            COALESCE(SUM(CASE WHEN k.tipo_movimiento IN ('compra', 'ajuste', 'ajuste_entrada', 'reversion') THEN k.cantidad ELSE 0 END), 0) AS total_entradas,
+            -- AÑADIDOS LOS NUEVOS TIPOS DE SALIDA
+            COALESCE(SUM(CASE WHEN k.tipo_movimiento IN ('venta', 'salida_cocina', 'merma', 'ajuste_salida') THEN k.cantidad ELSE 0 END), 0) AS total_salidas,
             COUNT(k.id) AS total_movimientos
      FROM inventario.productos p
      LEFT JOIN inventario.kardex k ON k.producto_id = p.id
@@ -185,7 +183,8 @@ async function getValorizacionInventario() {
             c.nombre AS categoria,
             p.stock_actual,
             p.costo_promedio,
-            (p.stock_actual * p.costo_promedio) AS valor_total,
+            -- CÁLCULO PRECISO A 4 DECIMALES PARA LA VALORIZACIÓN
+            ROUND((p.stock_actual * p.costo_promedio), 4) AS valor_total,
             p.unidad_medida
      FROM inventario.productos p
      JOIN inventario.categorias c ON c.id = p.categoria_id
@@ -197,7 +196,7 @@ async function getValorizacionInventario() {
 
   return {
     productos: result.rows,
-    total_general: totalGeneral,
+    total_general: totalGeneral.toFixed(4),
   };
 }
 

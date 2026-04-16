@@ -41,9 +41,12 @@ export const ordenesService = {
     return response.data.data.orden;
   },
 
-  async cancelar(id, motivo) {
-    const response = await api.put(`/ordenes/${id}/cancelar`, { motivo });
-    return response.data.data.orden;
+  async cancelar(id, datos) {
+    // Le pasamos 'datos' directamente porque desde React ya le enviamos { motivo: "..." }
+    const response = await api.put(`/ordenes/${id}/cancelar`, datos);
+
+    // Devolvemos la respuesta directa del backend ({ success: true, message: "..." })
+    return response.data;
   },
 
   // NUEVA FUNCIÓN: Obtener productos para Menú del Día
@@ -57,4 +60,16 @@ export const ordenesService = {
     const response = await api.post(`/ordenes/${id}/cerrar`, datosPago);
     return response.data.data;
   },
-};
+// NUEVA FUNCIÓN: Aplicar cortesía a un detalle de orden
+  async aplicarCortesia(ordenId, detalleId, motivo) {
+    const response = await api.put(`/ordenes/${ordenId}/detalles/${detalleId}/cortesia`, { motivo });
+    return response.data;
+  },
+
+async aplicarDescuentoGlobal(ordenId, descuento) {
+    // ✅ CORRECTO: Envía el objeto directamente plano
+    const response = await api.put(`/ordenes/${ordenId}/descuento`, descuento);
+    return response.data;
+  }
+
+}; 
