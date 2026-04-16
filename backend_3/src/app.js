@@ -31,8 +31,9 @@ app.use(helmet());
 const allowedOrigins = [
   'http://localhost:5173',
   'http://192.168.1.36:5173',
+  'https://entre-gustos-y-sabores.vercel.app',
   process.env.FRONTEND_URL // Por si acaso tienes otra URL en tu .env
-];
+].filter(Boolean); // Elimina cualquier valor falso (como undefined)
 
 app.use(cors({
   origin: function (origin, callback) {
