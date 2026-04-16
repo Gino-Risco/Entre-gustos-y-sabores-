@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { comprasService } from '@/services/compras.service';
+import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -44,7 +45,7 @@ export const CompraCrear = () => {
             const provData = await comprasService.getAllProveedores();
             setProveedores(provData);
 
-            const response = await fetch('/api/productos');
+            const response = await api.get('/productos');
             const data = await response.json();
             // Ahora aceptamos insumos y empacados
             const insumos = data.data.productos.filter(p =>
