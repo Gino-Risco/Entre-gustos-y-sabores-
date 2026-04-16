@@ -46,7 +46,7 @@ export const CompraCrear = () => {
             setProveedores(provData);
 
             const response = await api.get('/productos');
-            const data = await response.json();
+            const data = response.data;
             // Ahora aceptamos insumos y empacados
             const insumos = data.data.productos.filter(p =>
                 (p.tipo === 'insumo' || p.tipo === 'empacado') && p.activo
