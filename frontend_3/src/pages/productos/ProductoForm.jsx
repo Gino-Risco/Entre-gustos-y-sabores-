@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Package, DollarSign, ListTodo, Image as ImageIcon, Upl
 import { toast } from 'sonner';
 import { productosService } from '@/services/productos.service';
 import { categoriasService } from '@/services/categorias.service';
+import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -125,12 +126,13 @@ export const ProductoForm = ({ modo }) => {
     const uploadData = new FormData();
     uploadData.append('imagen', file);
     setIsUploading(true);
-    try {
-      const response = await fetch('http://localhost:3000/api/upload', {
-        method: 'POST',
-        body: uploadData,
-      });
-      const result = await response.json();
+   try {
+      // ✅ Usamos api.post en lugar de fetch con localhost
+      const response = await api.post('/upload', uploadData);
+      
+      // ✅ Axios guarda la respuesta en .data automáticamente
+      const result = response.data; 
+
       if (result.success) {
         setFormData(prev => ({ ...prev, imagen_url: result.data.url }));
         toast.success('Imagen subida correctamente');
@@ -138,6 +140,7 @@ export const ProductoForm = ({ modo }) => {
         throw new Error(result.message);
       }
     } catch (error) {
+      console.error("Error subiendo imagen:", error);
       toast.error('Error al subir la imagen al servidor');
     } finally {
       setIsUploading(false);
