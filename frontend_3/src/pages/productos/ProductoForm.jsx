@@ -126,12 +126,16 @@ export const ProductoForm = ({ modo }) => {
     const uploadData = new FormData();
     uploadData.append('imagen', file);
     setIsUploading(true);
-   try {
-      // ✅ Usamos api.post en lugar de fetch con localhost
-      const response = await api.post('/upload', uploadData);
+try {
+      const response = await api.post('/upload', uploadData, {
+        headers: {
+          // El secreto está aquí: 'undefined' anula el JSON por defecto de tu api.js
+          // y deja que el navegador arme el paquete del archivo automáticamente.
+          'Content-Type': undefined 
+        }
+      });
       
-      // ✅ Axios guarda la respuesta en .data automáticamente
-      const result = response.data; 
+      const result = response.data;
 
       if (result.success) {
         setFormData(prev => ({ ...prev, imagen_url: result.data.url }));
